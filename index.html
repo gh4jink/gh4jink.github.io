@@ -349,6 +349,10 @@
   .shopmsg{min-height:1.4em;font-weight:700;color:#ffd84d}
   @media (max-width:620px){.packs{grid-template-columns:repeat(2,1fr)}}
   @media (max-height:520px){.pack{padding:8px 6px}.pack .stack{height:24px}.pack b{font-size:20px}}
+
+  .matchclk{font-size:13px;font-weight:700;color:var(--cream-dim);text-align:center}
+  .matchclk b{font-family:var(--num);font-size:20px;color:var(--cream);margin:0 2px}
+  .matchclk.low b{color:var(--blaze);animation:blink 1s steps(2) infinite}
 </style>
 <canvas id="game" aria-label="사격장 3D 화면"></canvas>
 <canvas id="drops" aria-hidden="true"></canvas>
@@ -367,6 +371,7 @@
     <div class="lbl">제한 시간 <span id="hLimit">5.00</span>s</div>
     <div class="big" id="hTime">5.00</div>
     <div class="bar" id="hBar"><i id="hBarFill"></i></div>
+    <div class="matchclk" id="hMatch" hidden>⏱ 대결 남은 시간 <b id="hMatchT">1:30</b> · 목숨 ∞</div>
   </div>
   <div class="plate right p3">
     <div class="lbl">점수</div>
@@ -439,6 +444,7 @@
           <label class="lbl" for="codeIn">판 코드 (첫 숫자 = 스테이지)</label>
           <div class="coderow"><input id="codeIn" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="0000" aria-describedby="codeHelp"><button class="ghost sm" id="codeNew" type="button">새 코드</button></div>
           <div class="modehelp" id="codeHelp"></div>
+          <div class="modehelp">대결 규칙: 목숨 무제한 · 전체 제한 시간 1분 30초 · 가장 멀리 맞힌 사람이 승리</div>
           <div id="passRow" hidden>
             <div class="lbl">참가 인원</div>
             <div class="seg three" id="nSeg" role="radiogroup" aria-label="참가 인원">
@@ -562,6 +568,7 @@
   // 대결 모드: 같은 코드 = 같은 표적 위치·날씨·방해꾼 일정
   const M = { mode: 'solo', on: false, code: '', seed: 0, n: 2, players: [], cur: 0 };
   let cdTimer = 0;
+  const MATCH_T = 90; // 대결 모드: 목숨 무제한, 전체 제한 시간 1분 30초
   const mulberry = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   const strHash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   const withSeed = (key, fn) => { if (!M.on) return fn(); const sv = Math.random; Math.random = mulberry(strHash(M.seed + ':' + key)); try { return fn(); } finally { Math.random = sv; } };
@@ -2474,7 +2481,7 @@
   let newUnlock = null;
   function startGame() {
     newUnlock = null;
-    Object.assign(G, { state: 'play', paused: false, round: 1, lives: LIVES, score: 0, shots: 0, hits: 0, reacts: [], rings: [], maxDist: 0,
+    Object.assign(G, { state: 'play', paused: false, round: 1, lives: M.on ? Infinity : LIVES, matchT: MATCH_T, score: 0, shots: 0, hits: 0, reacts: [], rings: [], maxDist: 0,
       after: 0, afterFn: null, zoom: false, zoomHold: false, events: [], wobble: null, animalsHit: 0, penalty: 0, intercepts: 0, splats: 0, shipHits: 0, rocks: 0, stolen: 0,
       knock: 0, shake: 0, trigger: false, spin: 0, bloom: 0, burstLeft: 0, cool: 0, weatherOn: false, ammo: magSize(), reload: 0, coins: 0 });
     renderWallet();
@@ -2589,7 +2596,7 @@
   }
   function timeout() {
     G.lives--; sndBuzz();
-    toast(G.lives > 0 ? `시간 초과 · 남은 기회 ${G.lives}` : '시간 초과', true);
+    toast(M.on ? '시간 초과 · 같은 거리 다시!' : G.lives > 0 ? `시간 초과 · 남은 기회 ${G.lives}` : '시간 초과', true);
     G.phase = 'fall'; G.pt = 0; G.events = [];
     G.after = 1.0; G.afterFn = G.lives > 0 ? spawn : endGame;
     renderHUD();
@@ -2604,6 +2611,11 @@
     $('hLimit').textContent = G.limit.toFixed(2);
     $('hScore').textContent = G.score.toLocaleString();
     [...$('hLives').children].forEach((b, i) => b.classList.toggle('off', i >= G.lives));
+    $('hLives').hidden = M.on; $('hMatch').hidden = !M.on; if (M.on) renderMatchClock();
+  }
+  function renderMatchClock() {
+    const s = Math.ceil(G.matchT), t = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    $('hMatchT').textContent = t; $('hMatch').classList.toggle('low', G.matchT <= 10);
   }
   function renderTimer() {
     const left = G.phase === 'live' ? Math.max(0, G.limit - G.t) : G.phase === 'rise' ? G.limit : 0;
@@ -2780,6 +2792,7 @@
       }
       if (G.afterFn) { G.after -= dt; if (G.after <= 0) { const fn = G.afterFn; G.afterFn = null; fn(); } }
       renderTimer();
+      if (M.on) { G.matchT = Math.max(0, G.matchT - dt); renderMatchClock(); if (G.matchT <= 0) { toast('시간 종료!'); endGame(); } }
     }
     if (running) {
       if (!playing) demoTick(dt);
@@ -2953,12 +2966,12 @@
     if (M.mode === 'code') {
       $('rEyebrow').textContent = '같은 판 코드 대결';
       $('rTitle').textContent = `${MAP.name} 스테이지`;
-      $('rText').textContent = '친구 모두 같은 코드를 입력했는지 확인하세요. "하나, 둘, 셋!" 하고 같이 시작을 누르면 3초 카운트다운 뒤에 동시에 시작합니다.';
+      $('rText').textContent = '친구 모두 같은 코드를 입력했는지 확인하세요. 대결은 목숨 무제한, 전체 1분 30초 동안 가장 멀리 맞히는 사람이 이겨요. "하나, 둘, 셋!" 하고 같이 시작을 누르면 3초 카운트다운 뒤에 동시에 시작합니다.';
     } else {
       const p = M.players[M.cur];
       $('rEyebrow').textContent = `돌려가며 하기 · ${M.cur + 1} / ${M.players.length} 번째`;
       $('rTitle').textContent = `${p.icon} ${p.name} 차례`;
-      $('rText').textContent = `${p.name}에게 기기를 넘겨주세요. 모두 같은 판(${MAP.name} · 판 ${M.code})이라 공평합니다. 준비되면 시작!`;
+      $('rText').textContent = `${p.name}에게 기기를 넘겨주세요. 모두 같은 판(${MAP.name} · 판 ${M.code})이라 공평합니다. 목숨 무제한, 전체 1분 30초 동안 가장 멀리 맞히면 이겨요. 준비되면 시작!`;
     }
     $('rCode').textContent = M.code;
     $('ready').hidden = false;
@@ -2986,7 +2999,7 @@
       let log = []; try { log = JSON.parse(store.get(key, '[]')) || []; } catch (e) { log = []; }
       log.push({ dist: res.dist, score: res.score, w: WEAP.name }); log.sort((a, b) => b.dist - a.dist || b.score - a.score); log = log.slice(0, 5);
       store.set(key, JSON.stringify(log));
-      $('oEyebrow').textContent = `판 ${M.code} · ${MAP.name} · 대결 결과`;
+      $('oEyebrow').textContent = `판 ${M.code} · ${MAP.name} · 대결 결과 (1분 30초)`;
       $('oBest').innerHTML = `<b>친구들과 화면을 맞대고 비교해 보세요!</b><br>이 기기의 판 ${M.code} 기록: ` + log.map((r, i) => `${i === 0 ? '🏅' : ''}${r.dist} m · ${r.score.toLocaleString()}점`).join(' / ');
       $('againBtn').textContent = '같은 판 다시';
       $('over').hidden = false;
